@@ -871,7 +871,7 @@ function renderHome(){
   <div class="steps">
     <div class="step rv"><div class="step-ic">${ic('search','ic-lg')}</div><b>تصفح المنتجات</b><span>اختر من الأقسام أو ابحث باسم المنتج أو الوزن.</span></div>
     <div class="step rv" style="--d:90ms"><div class="step-ic">${ic('cart','ic-lg')}</div><b>أضف للسلة</b><span>حدّد الكمية بالكرتونة، تجزئة أو جملة.</span></div>
-    <div class="step rv" style="--d:180ms"><div class="step-ic">${ic('wa','ic-lg')}</div><b>أرسل عبر WhatsApp</b><span>راجع السلة وأرسل صورة الطلب في رسالة واحدة.</span></div>
+    <div class="step rv" style="--d:180ms"><div class="step-ic">${ic('wa','ic-lg')}</div><b>أرسل عبر WhatsApp</b><span>راجع السلة وأرسل الطلب في رسالة واحدة.</span></div>
   </div>
 </div></section>
 
@@ -1130,7 +1130,7 @@ function toggleType(id,ty){const it=cart.find(i=>i.id===id&&i.ty===ty);if(!it)re
   if(other){other.q+=it.q;cart=cart.filter(i=>i!==it);if(nt==='wholesale'&&other.q<5)other.q=5}
   else{it.ty=nt;if(nt==='wholesale'&&it.q<5)it.q=5}
   saveCart();renderCart()}
-function orderMsg(){const lines=cart.map((i,n)=>{const p=byId(i.id);const priceStr=i.ty==='wholesale'?' — جملة — (سعر خاص، يُحدد عبر واتساب)':(p.pr?' — تجزئة — سعر الكرتونة: '+fmt(p.pr)+' ج.م — الإجمالي: '+fmt(p.pr*i.q)+' ج.م':'');return (n+1)+'. '+p.ar+(hasWeight(p)?' ('+p.weight+')':'')+' — الكمية: '+i.q+' '+unitLabel(i.ty)+priceStr});return 'مرحباً Heaven Gardens 🌿'+NL+'أرغب في طلب المنتجات التالية:'+NL+lines.join(NL)+NL+'إجمالي التجزئة: '+fmt(cartTotal())+' ج.م'+(hasWholesale()?NL+'⚠️ '+WA_NOTE:'')}
+function orderMsg(ref){const lines=cart.map((i,n)=>{const p=byId(i.id);const priceStr=i.ty==='wholesale'?' — جملة — (سعر خاص، يُحدد عبر واتساب)':(p.pr?' — تجزئة — سعر الكرتونة: '+fmt(p.pr)+' ج.م — الإجمالي: '+fmt(p.pr*i.q)+' ج.م':'');return (n+1)+'. '+p.ar+(hasWeight(p)?' ('+p.weight+')':'')+' — الكمية: '+i.q+' '+unitLabel(i.ty)+priceStr});return 'مرحباً Heaven Gardens 🌿'+NL+(ref?'رقم الطلب: '+ref+NL:'')+'أرغب في طلب المنتجات التالية:'+NL+lines.join(NL)+NL+'إجمالي التجزئة: '+fmt(cartTotal())+' ج.م'+(hasWholesale()?NL+'⚠️ '+WA_NOTE:'')}
 
 const ORD_KEY='hg_orders';
 const readOrders=()=>{try{return JSON.parse(store.get(ORD_KEY,'[]'))||[]}catch(e){return []}};
@@ -1204,23 +1204,18 @@ async function buildOrderCard(ref){
   const blob=await new Promise((res,rej)=>cv.toBlob(b=>b?res(b):rej(new Error('blob')),'image/jpeg',.92));
   return {cv,blob}}
 let oc=null,cardTimer=0;
-function prepCard(){const sig=JSON.stringify(cart);if(oc&&oc.sig===sig)return oc.p;
-  const old=oc,ref='HG-'+Date.now().toString(36).slice(-6).toUpperCase(),me={sig,ref,saved:false};
-  me.p=buildOrderCard(ref).then(o=>{me.cv=o.cv;me.blob=o.blob;me.url=URL.createObjectURL(o.blob);me.file=new File([o.blob],'heaven-gardens-'+ref+'.jpg',{type:'image/jpeg'});return me});
-  me.p.catch(()=>{if(oc===me)oc=null});
-  if(old&&old.url)setTimeout(()=>URL.revokeObjectURL(old.url),1000);
-  oc=me;return me.p}
+function curOc(){const sig=JSON.stringify(cart);
+  if(!oc||oc.sig!==sig){if(oc&&oc.url){const u=oc.url;setTimeout(()=>URL.revokeObjectURL(u),1000)}
+    oc={sig,ref:'HG-'+Date.now().toString(36).slice(-6).toUpperCase(),saved:false,p:null}}
+  return oc}
+function prepCard(){const me=curOc();
+  if(!me.p){me.p=buildOrderCard(me.ref).then(async o=>{me.cv=o.cv;me.blob=o.blob;me.url=URL.createObjectURL(o.blob);me.file=new File([o.blob],'heaven-gardens-'+me.ref+'.jpg',{type:'image/jpeg'});
+      if(CAN_COPY)me.png=await new Promise(r=>o.cv.toBlob(r,'image/png'));return me});
+    me.p.catch(()=>{me.p=null})}
+  return me.p}
 const markSent=o=>{if(o&&!o.saved){o.saved=true;saveOrderHistory(o.ref)}};
 async function shareCard(o){try{await navigator.share({files:[o.file],text:caption(o.ref)});markSent(o);toast('تمت مشاركة صورة الطلب');return true}catch(e){return !!e&&e.name==='AbortError'}}
-async function copyCard(o){try{const png=new Promise(r=>o.cv.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);markSent(o);toast('تم نسخ صورة الطلب')}catch(e){toast('تعذّر النسخ، احفظ الصورة بدلاً من ذلك')}}
-async function sendOrder(btn){
-  if(!cart.length)return;
-  const label=btn.innerHTML;btn.disabled=true;btn.textContent='جاري تجهيز صورة الطلب…';
-  let o=null;try{o=await prepCard()}catch(e){}
-  if(btn.isConnected){btn.disabled=false;btn.innerHTML=label}
-  if(!o){saveOrderHistory();location.href=WA+'?text='+encodeURIComponent(orderMsg());return} /* احتياطي: لو تعذّر رسم الصورة */
-  if(CAN_SHARE&&await shareCard(o))return;
-  renderCardView(o)}
+async function copyCard(o){try{await navigator.clipboard.write([new ClipboardItem({'image/png':o.png||new Promise(r=>o.cv.toBlob(r,'image/png'))})]);markSent(o);toast('تم نسخ صورة الطلب')}catch(e){toast('تعذّر النسخ، احفظ الصورة بدلاً من ذلك')}}
 function renderCardView(o){
   drawer.setAttribute('aria-label','صورة الطلب');
   const acts=`<div class="oc-row">${CAN_COPY?`<button class="btn btn-ghost" data-copycard>نسخ الصورة</button>`:''}<a class="btn btn-ghost" data-savecard href="${o.url}" download="${o.file.name}">حفظ الصورة</a><a class="btn btn-ghost" data-openchat target="_blank" rel="noopener" href="${WA}?text=${encodeURIComponent(chatMsg(o.ref))}">${ic('wa','ic-sm')}فتح المحادثة</a></div>`;
@@ -1250,9 +1245,9 @@ function renderCart(){
     <div class="d-sum big"><span>إجمالي التجزئة</span><span class="num"><b>${fmt(cartTotal())}</b> ج.م</span></div>
     ${hasWholesale()?`<div class="notice">${ic('info')}<span>${WA_NOTE}</span></div>`:''}
     <p class="note">الجملة تبدأ من ${fmt(5)} كراتين للمنتج الواحد.</p>
-    <button class="btn btn-wa btn-lg btn-block" data-sendimg>${ic('wa')}${CAN_SHARE?'إرسال الطلب كصورة عبر WhatsApp':'تجهيز صورة الطلب للإرسال'}</button>
-    ${CAN_SHARE?'<p class="note" style="margin:10px 0 0;text-align:center">ستظهر قائمة المشاركة: اختر WhatsApp ثم محادثة Heaven Gardens.</p>':''}
-    <div class="d-links"><button data-cardview>معاينة صورة الطلب</button><button class="d-clear" data-clear>تفريغ السلة</button></div></div>`;
+    <a class="btn btn-wa btn-lg btn-block" data-sendtext target="_blank" rel="noopener" href="${WA}?text=${encodeURIComponent(orderMsg(curOc().ref))}">${ic('wa')}إرسال الطلب عبر WhatsApp</a>
+    ${CAN_COPY?'<p class="note" style="margin:10px 0 0;text-align:center">تُنسخ صورة الطلب عند الإرسال؛ الصقها في المحادثة إن أردت إرفاقها.</p>':''}
+    <div class="d-links"><button data-cardview>صورة الطلب</button><button class="d-clear" data-clear>تفريغ السلة</button></div></div>`;
   if(drawer.classList.contains('open')){clearTimeout(cardTimer);cardTimer=setTimeout(()=>{cart.length&&prepCard().catch(()=>{})},250)}}
 function syncCards(){$$('[data-act]').forEach(el=>{el.innerHTML=act(el.dataset.act)})}
 let lastFocus=null;
@@ -1262,9 +1257,11 @@ function openCart(o){const was=drawer.classList.contains('open');
   if(!o&&was&&lastFocus){try{lastFocus.focus({preventScroll:true})}catch(e){}lastFocus=null}}
 
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-add],[data-close],[data-inc],[data-dec],[data-rm],[data-clear],[data-toggletype],[data-backcart],[data-reorder],[data-opencart],[data-sendimg],[data-cardview],[data-sharecard],[data-copycard],[data-savecard],[data-openchat],#cartBtn,#cartTab,#historyBtn,#historyTab,#overlay');if(!t)return;
+  const t=e.target.closest('[data-add],[data-close],[data-inc],[data-dec],[data-rm],[data-clear],[data-toggletype],[data-backcart],[data-reorder],[data-opencart],[data-sendtext],[data-cardview],[data-sharecard],[data-copycard],[data-savecard],[data-openchat],#cartBtn,#cartTab,#historyBtn,#historyTab,#overlay');if(!t)return;
   const d=t.dataset,host=t.closest('[data-act]'),hid=host&&host.dataset.act,inDrawer=!!t.closest('#drawer');
-  if(d.sendimg!==undefined){sendOrder(t);return}
+  if(d.sendtext!==undefined){const o=curOc(); /* الرابط يفتح المحادثة؛ ننسخ الصورة إن كانت جاهزة */
+    if(CAN_COPY&&o.png){try{navigator.clipboard.write([new ClipboardItem({'image/png':o.png})]).catch(()=>{})}catch(e){}}
+    markSent(o);return}
   if(d.cardview!==undefined){prepCard().then(renderCardView).catch(()=>toast('تعذّر تجهيز الصورة'));return}
   if(d.sharecard!==undefined){oc&&oc.file&&shareCard(oc);return}
   if(d.copycard!==undefined){oc&&oc.cv&&copyCard(oc);return}
